@@ -1,0 +1,213 @@
+package org.traffic.service;
+
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.traffic.model.Colors;
+import org.traffic.model.Directions;
+import org.traffic.model.Movement;
+import org.traffic.model.Response;
+import org.traffic.model.SignalSequence;
+import org.traffic.model.TrafficLightHistory;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
+
+@Service
+public class TrafficLightService {
+
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "traffic-scheduler");
+        t.setDaemon(true);
+        return t;
+    });
+    private final ReentrantLock lock = new ReentrantLock();
+    private final AtomicInteger currentPhaseIndex = new AtomicInteger(0);
+    @Value("${max.record.size:10}")
+    private Long maxRecordSize;
+    private volatile List<Movement> movements = new ArrayList<>();
+
+    private final List<TrafficLightHistory> records = new ArrayList<>();
+
+    private volatile ScheduledFuture<?> scheduledFuture;
+
+    private volatile boolean paused = false;
+
+    public TrafficLightService() {
+    }
+
+    @PostConstruct
+    public void init() {
+        applySequence(20, 3, 20, 3);
+        startCycle();
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        scheduler.shutdownNow();
+    }
+
+    public void setSequence(SignalSequence req) {
+        lock.lock();
+        try {
+            applySequence(req.getTimeGreenNS(), req.getTimeYellowNS(),
+                    req.getTimeGreenEW(), req.getTimeYellowEW());
+            currentPhaseIndex.set(0);
+            cancelScheduled();
+            if (!paused) {
+                scheduleCurrentPhase();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void applySequence(long nsGreenSec, long nsYellowSec, long ewGreenSec, long ewYellowSec) {
+        List<Movement> list = new ArrayList<>();
+        list.add(new Movement(Directions.NORTH, Colors.GREEN, TimeUnit.SECONDS.toMillis(nsGreenSec)));
+        list.add(new Movement(Directions.NORTH, Colors.YELLOW, TimeUnit.SECONDS.toMillis(nsYellowSec)));
+        list.add(new Movement(Directions.EAST, Colors.GREEN, TimeUnit.SECONDS.toMillis(ewGreenSec)));
+        list.add(new Movement(Directions.EAST, Colors.YELLOW, TimeUnit.SECONDS.toMillis(ewYellowSec)));
+        list.add(new Movement(Directions.SOUTH, Colors.GREEN, TimeUnit.SECONDS.toMillis(ewGreenSec)));
+        list.add(new Movement(Directions.SOUTH, Colors.YELLOW, TimeUnit.SECONDS.toMillis(ewYellowSec)));
+        list.add(new Movement(Directions.WEST, Colors.GREEN, TimeUnit.SECONDS.toMillis(ewGreenSec)));
+        list.add(new Movement(Directions.WEST, Colors.YELLOW, TimeUnit.SECONDS.toMillis(ewYellowSec)));
+        this.movements = List.copyOf(list);
+    }
+
+    public void pause() {
+        lock.lock();
+        try {
+            if (paused) return;
+            paused = true;
+            cancelScheduled();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void resume() {
+        lock.lock();
+        try {
+            if (!paused) return;
+            paused = false;
+            scheduleCurrentPhase();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public Response getStatus() {
+        Response response = new Response();
+        EnumMap<Directions, Colors> lights = new EnumMap<>(Directions.class);
+        List<Movement> movementsList = movements;
+        int index = currentPhaseIndex.get() % movementsList.size();
+        Movement movement = movementsList.get(index);
+        response.setActiveDirection(movement.getDirection());
+        if (movement.getDirection() == Directions.NORTH) {
+            response.setActiveColor(movement.getColors());
+            lights.put(Directions.EAST, Colors.RED);
+            lights.put(Directions.SOUTH, Colors.RED);
+            lights.put(Directions.WEST, Colors.RED);
+        } else if (movement.getDirection() == Directions.EAST) {
+            response.setActiveColor(movement.getColors());
+            lights.put(Directions.NORTH, Colors.RED);
+            lights.put(Directions.SOUTH, Colors.RED);
+            lights.put(Directions.WEST, Colors.RED);
+        } else if (movement.getDirection() == Directions.SOUTH) {
+            response.setActiveColor(movement.getColors());
+            lights.put(Directions.EAST, Colors.RED);
+            lights.put(Directions.NORTH, Colors.RED);
+            lights.put(Directions.WEST, Colors.RED);
+        } else {
+            response.setActiveColor(movement.getColors());
+            lights.put(Directions.EAST, Colors.RED);
+            lights.put(Directions.SOUTH, Colors.RED);
+            lights.put(Directions.NORTH, Colors.RED);
+        }
+        response.setInactiveState(lights);
+        response.setPaused(paused);
+        return response;
+    }
+
+    private void startCycle() {
+        lock.lock();
+        try {
+            cancelScheduled();
+            if (!paused) scheduleCurrentPhase();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void scheduleCurrentPhase() {
+        List<Movement> movementsList = movements;
+        if (movementsList.isEmpty()) return;
+        int index = currentPhaseIndex.get() % movementsList.size();
+        //System.out.println("currentPhaseIndex.get() " + currentPhaseIndex.get() + " movementsList.size " + movementsList.size() + "index " + index);
+        Movement current = movementsList.get(index);
+        Response status = getStatus();
+        boolean anyInactiveGreen = status.getInactiveState().values().stream()
+                .anyMatch(c -> c == Colors.GREEN);
+        if (anyInactiveGreen) {
+            lock.lock();
+            try {
+                paused = true;
+                cancelScheduled();
+            } finally {
+                lock.unlock();
+            }
+            throw new IllegalStateException("Conflicting GREEN lights detected");
+        }
+
+        long duration = current.getDurationMillis();
+        TrafficLightHistory history = new TrafficLightHistory();
+        history.setId(currentPhaseIndex.longValue() + 1);
+        history.setColors(current.getColors());
+        history.setDirection(current.getDirection());
+        history.setTimestamp(LocalDateTime.now());
+        history.setDurationSeconds(duration);
+        records.add(history);
+
+        if (duration <= 0) {
+            currentPhaseIndex.incrementAndGet();
+            scheduleCurrentPhase();
+            return;
+        }
+
+        scheduledFuture = scheduler.schedule(() -> {
+            lock.lock();
+            try {
+                if (paused) return;
+                currentPhaseIndex.incrementAndGet();
+                scheduleCurrentPhase();
+            } finally {
+                lock.unlock();
+            }
+        }, duration, TimeUnit.MILLISECONDS);
+
+    }
+
+    private void cancelScheduled() {
+        if (scheduledFuture != null && !scheduledFuture.isDone()) {
+            scheduledFuture.cancel(false);
+        }
+        scheduledFuture = null;
+    }
+
+    public List<TrafficLightHistory> getTimingHistory() {
+        List<TrafficLightHistory> copy = new ArrayList<>(records);
+        java.util.Collections.reverse(copy);
+        long limit = (maxRecordSize == null) ? copy.size() : maxRecordSize;
+        return copy.stream().limit(limit).toList();
+    }
+}

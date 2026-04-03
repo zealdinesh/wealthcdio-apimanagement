@@ -1,0 +1,25 @@
+openapi: 3.0.1
+info:
+  title: Traffic Light Controller API
+  version: 1.0.0
+
+paths:
+  /api/v1/status:
+    post:
+      summary: traffic status
+
+  /api/v1/sequence:
+    get:
+      summary: Sequence
+
+  /api/v1/pause:
+    post:
+      summary: Pause traffic
+
+  /api/v1/resume:
+    post:
+      summary: Resume traffic
+
+  /api/v1/history:
+    get:
+      summary: Get history
