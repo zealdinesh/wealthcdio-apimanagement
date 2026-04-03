@@ -4,22 +4,22 @@ info:
   version: 1.0.0
 
 paths:
-  /api/v1/status:
-    post:
+  /api/traffic/status:
+    get:
       summary: traffic status
 
-  /api/v1/sequence:
-    get:
+  /api/traffic/sequence:
+    post:
       summary: Sequence
 
-  /api/v1/pause:
-    post:
+  /api/traffic/pause:
+    get:
       summary: Pause traffic
 
-  /api/v1/resume:
-    post:
+  /api/traffic/resume:
+    get:
       summary: Resume traffic
 
-  /api/v1/history:
+  /api/traffic/history:
     get:
       summary: Get history

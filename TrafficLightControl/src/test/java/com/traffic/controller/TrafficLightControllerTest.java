@@ -62,7 +62,7 @@ class TrafficLightControllerTest {
 
         when(service.getStatus()).thenReturn(resp);
 
-        mockMvc.perform(get("/api/v1/status"))
+        mockMvc.perform(get("/api/traffic/status"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
 
@@ -73,7 +73,7 @@ class TrafficLightControllerTest {
     void callSetSequence() throws Exception {
         String json = "{\"timeGreenNS\":5,\"timeYellowNS\":2,\"timeGreenEW\":4,\"timeYellowEW\":2}";
 
-        mockMvc.perform(post("/api/v1/sequence")
+        mockMvc.perform(post("/api/traffic/sequence")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
                 .andExpect(status().isOk())
@@ -90,7 +90,7 @@ class TrafficLightControllerTest {
 
     @Test
     void callPauseService() throws Exception {
-        mockMvc.perform(get("/api/v1/pause"))
+        mockMvc.perform(get("/api/traffic/pause"))
                 .andExpect(status().isOk())
                 .andExpect(content().string("Paused"));
         verify(service, times(1)).pause();
@@ -98,7 +98,7 @@ class TrafficLightControllerTest {
 
     @Test
     void callResumeService() throws Exception {
-        mockMvc.perform(get("/api/v1/resume"))
+        mockMvc.perform(get("/api/traffic/resume"))
                 .andExpect(status().isOk())
                 .andExpect(content().string("Resumed"));
         verify(service, times(1)).resume();
@@ -117,7 +117,7 @@ class TrafficLightControllerTest {
 
         when(service.getTimingHistory()).thenReturn(list);
 
-        mockMvc.perform(get("/api/v1/history"))
+        mockMvc.perform(get("/api/traffic/history"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
 
