@@ -14,7 +14,7 @@ import org.traffic.service.TrafficLightService;
 import java.util.List;
 
 @RestController
-@RequestMapping("api/v1")
+@RequestMapping("api/traffic")
 public class TrafficLightController {
     @Autowired
     private TrafficLightService service;
